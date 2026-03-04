@@ -76,86 +76,92 @@ if st.button("✨ Get Recommendations", type="primary"):
     st.session_state["rating_mode"] = set()
 
 # ── Render recommendation cards ───────────────────────────────────────────────
-recs: list[dict] = st.session_state.get("recs", [])
-rating_mode: set = st.session_state.get("rating_mode", set())
+@st.fragment
+def render_recs():
+    recs: list[dict] = st.session_state.get("recs", [])
+    rating_mode: set = st.session_state.get("rating_mode", set())
 
-if not recs:
-    st.stop()
-
-st.divider()
-for i, rec in enumerate(recs):
-    tmdb_id     = rec.get("tmdb_id")
-    title       = rec.get("title", "Unknown")
-    year        = rec.get("year") or "?"
-    mtype       = "Movie" if rec.get("media_type") == "movie" else "TV Show"
-    genres      = rec.get("genres", [])
-    reason      = rec.get("reason", "")
-    imdb_rating = rec.get("imdb_rating")
-    poster      = get_poster_url(rec.get("poster_path"))
-
-    col_img, col_info = st.columns([1, 4])
-
-    with col_img:
-        if poster:
-            st.image(poster, width=150)
-        else:
-            st.markdown("🎞️")
-
-    with col_info:
-        st.markdown(f"### {title} ({year})")
-        if genres:
-            st.caption("  ·  ".join(genres))
-        imdb_str = f"⭐ {imdb_rating:.1f} / 10" if imdb_rating else "No rating"
-        st.markdown(f"`{mtype}`  ·  {imdb_str}")
-        overview = rec.get("overview", "")
-        if overview:
-            st.write(overview[:300] + ("…" if len(overview) > 300 else ""))
-
-        if tmdb_id in rating_mode:
-            # Rating mode: show score selector + submit
-            score_key = f"rec_score_{i}_{tmdb_id}"
-            st.caption("Your rating:")
-            st.segmented_control(
-                "Rating", options=list(range(11)), default=5,
-                key=score_key, label_visibility="collapsed",
-            )
-            col_submit, col_cancel = st.columns(2)
-            with col_submit:
-                if st.button("✅ Submit rating", key=f"submit_{i}_{tmdb_id}", type="primary", use_container_width=True):
-                    score = st.session_state.get(score_key, 5)
-                    if tmdb_id:
-                        save_taste_rating(tmdb_id, title, "user", score)
-                        add_recommendation_skip(tmdb_id, title)
-                    st.session_state["recs"].pop(i)
-                    st.session_state["rating_mode"].discard(tmdb_id)
-                    st.toast(f"Rating saved for **{title}**!")
-                    st.rerun()
-            with col_cancel:
-                if st.button("✕ Cancel", key=f"cancel_{i}_{tmdb_id}", use_container_width=True):
-                    st.session_state["rating_mode"].discard(tmdb_id)
-                    st.rerun()
-        else:
-            # Default mode: action buttons
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button("👁 Already Watched", key=f"watched_{i}_{tmdb_id}", use_container_width=True):
-                    st.session_state["rating_mode"].add(tmdb_id)
-                    st.rerun()
-            with col2:
-                if st.button("📌 Add to Watchlist", key=f"wl_{i}_{tmdb_id}", use_container_width=True):
-                    if tmdb_id:
-                        add_to_watchlist(
-                            tmdb_id, title, rec.get("media_type", "movie"),
-                            rec.get("poster_path"), rec.get("overview", ""),
-                        )
-                    st.session_state["recs"].pop(i)
-                    st.toast(f"**{title}** added to your watchlist!")
-                    st.rerun()
-            with col3:
-                if st.button("⏭ Skip", key=f"skip_{i}_{tmdb_id}", use_container_width=True):
-                    if tmdb_id:
-                        add_recommendation_skip(tmdb_id, title)
-                    st.session_state["recs"].pop(i)
-                    st.rerun()
+    if not recs:
+        return
 
     st.divider()
+    for i, rec in enumerate(recs):
+        tmdb_id     = rec.get("tmdb_id")
+        title       = rec.get("title", "Unknown")
+        year        = rec.get("year") or "?"
+        mtype       = "Movie" if rec.get("media_type") == "movie" else "TV Show"
+        genres      = rec.get("genres", [])
+        imdb_rating = rec.get("imdb_rating")
+        poster      = get_poster_url(rec.get("poster_path"))
+
+        col_img, col_info = st.columns([1, 4])
+
+        with col_img:
+            if poster:
+                st.image(poster, width=150)
+            else:
+                st.markdown("🎞️")
+
+        with col_info:
+            st.markdown(f"### {title} ({year})")
+            if genres:
+                st.caption("  ·  ".join(genres))
+            imdb_str = f"⭐ {imdb_rating:.1f} / 10" if imdb_rating else "No rating"
+            st.markdown(f"`{mtype}`  ·  {imdb_str}")
+            overview = rec.get("overview", "")
+            if overview:
+                st.write(overview[:300] + ("…" if len(overview) > 300 else ""))
+
+            if tmdb_id in rating_mode:
+                # Rating mode: show score selector + submit
+                score_key = f"rec_score_{i}_{tmdb_id}"
+                st.caption("Your rating:")
+                st.segmented_control(
+                    "Rating", options=list(range(11)), default=5,
+                    key=score_key, label_visibility="collapsed",
+                )
+                col_submit, col_cancel = st.columns(2)
+                with col_submit:
+                    if st.button("✅ Submit rating", key=f"submit_{i}_{tmdb_id}", type="primary", use_container_width=True):
+                        score = st.session_state.get(score_key, 5)
+                        if tmdb_id:
+                            save_taste_rating(tmdb_id, title, "user", score)
+                            add_recommendation_skip(tmdb_id, title)
+                        st.session_state["recs"].pop(i)
+                        st.session_state["rating_mode"].discard(tmdb_id)
+                        st.toast(f"Rating saved for **{title}**!")
+                        st.rerun(scope="fragment")
+                with col_cancel:
+                    if st.button("✕ Cancel", key=f"cancel_{i}_{tmdb_id}", use_container_width=True):
+                        st.session_state["rating_mode"].discard(tmdb_id)
+                        st.rerun(scope="fragment")
+            else:
+                # Default mode: action buttons
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("👁 Already Watched", key=f"watched_{i}_{tmdb_id}", use_container_width=True):
+                        st.session_state["rating_mode"].add(tmdb_id)
+                        st.rerun(scope="fragment")
+                with col2:
+                    if st.button("📌 Add to Watchlist", key=f"wl_{i}_{tmdb_id}", use_container_width=True):
+                        if tmdb_id:
+                            add_to_watchlist(
+                                tmdb_id, title, rec.get("media_type", "movie"),
+                                rec.get("poster_path"), rec.get("overview", ""),
+                            )
+                        st.session_state["recs"].pop(i)
+                        st.toast(f"**{title}** added to your watchlist!")
+                        st.rerun(scope="fragment")
+                with col3:
+                    if st.button("⏭ Skip", key=f"skip_{i}_{tmdb_id}", use_container_width=True):
+                        if tmdb_id:
+                            add_recommendation_skip(tmdb_id, title)
+                        st.session_state["recs"].pop(i)
+                        st.rerun(scope="fragment")
+
+        st.divider()
+
+if st.session_state.get("recs"):
+    render_recs()
+else:
+    st.stop()
