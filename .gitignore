@@ -1,0 +1,8 @@
+.env
+tracker.db
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.DS_Store
+*.log
