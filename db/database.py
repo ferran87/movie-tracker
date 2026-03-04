@@ -1,26 +1,33 @@
-import sqlite3
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
+
+import psycopg2
+import psycopg2.extras
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 
-DB_PATH = os.getenv("DB_PATH", "tracker.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 
-def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+@contextmanager
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL)
+    try:
+        with conn:  # auto-commit on success, rollback on exception
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                yield cur
+    finally:
+        conn.close()
 
 
 def init_db():
-    with get_connection() as conn:
-        conn.executescript("""
+    with get_db() as cur:
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS media (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                id            SERIAL PRIMARY KEY,
                 tmdb_id       INTEGER NOT NULL UNIQUE,
                 media_type    TEXT NOT NULL CHECK(media_type IN ('movie', 'tv')),
                 title         TEXT NOT NULL,
@@ -33,59 +40,63 @@ def init_db():
                 imdb_id       TEXT,
                 language      TEXT,
                 runtime_mins  INTEGER,
-                created_at    TEXT DEFAULT (datetime('now'))
-            );
-
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS watch_log (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 media_id    INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
                 watch_date  TEXT NOT NULL,
                 platform    TEXT,
                 notes       TEXT,
-                created_at  TEXT DEFAULT (datetime('now'))
-            );
-
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS ratings (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           SERIAL PRIMARY KEY,
                 watch_log_id INTEGER NOT NULL REFERENCES watch_log(id) ON DELETE CASCADE,
                 person       TEXT NOT NULL CHECK(person IN ('user', 'wife')),
                 score        REAL NOT NULL CHECK(score >= 0 AND score <= 10),
                 reaction     TEXT,
-                created_at   TEXT DEFAULT (datetime('now')),
+                created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(watch_log_id, person)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_watch_log_media ON watch_log(media_id);
-            CREATE INDEX IF NOT EXISTS idx_watch_log_date  ON watch_log(watch_date);
-            CREATE INDEX IF NOT EXISTS idx_ratings_log     ON ratings(watch_log_id);
-            CREATE INDEX IF NOT EXISTS idx_media_type      ON media(media_type);
-
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_watch_log_media ON watch_log(media_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_watch_log_date  ON watch_log(watch_date)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ratings_log     ON ratings(watch_log_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_media_type      ON media(media_type)")
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS taste_ratings (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                id        SERIAL PRIMARY KEY,
                 tmdb_id   INTEGER NOT NULL,
                 title     TEXT NOT NULL,
                 person    TEXT NOT NULL CHECK(person IN ('user', 'wife')),
                 score     REAL NOT NULL CHECK(score >= 0 AND score <= 10),
-                rated_at  TEXT DEFAULT (datetime('now')),
+                rated_at  TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(tmdb_id, person)
-            );
-
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS watchlist (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          SERIAL PRIMARY KEY,
                 tmdb_id     INTEGER NOT NULL UNIQUE,
                 title       TEXT NOT NULL,
                 media_type  TEXT NOT NULL,
                 poster_path TEXT,
                 overview    TEXT,
-                added_at    TEXT DEFAULT (datetime('now'))
-            );
-
+                added_at    TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS recommendation_skips (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         SERIAL PRIMARY KEY,
                 tmdb_id    INTEGER NOT NULL UNIQUE,
                 title      TEXT NOT NULL,
-                skipped_at TEXT DEFAULT (datetime('now'))
-            );
+                skipped_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
         """)
 
 
@@ -94,7 +105,7 @@ def insert_media(data: dict) -> int:
         INSERT INTO media (
             tmdb_id, media_type, title, overview, genres, cast_top5,
             poster_path, release_year, imdb_rating, imdb_id, language, runtime_mins
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT(tmdb_id) DO UPDATE SET
             title        = excluded.title,
             overview     = excluded.overview,
@@ -106,33 +117,32 @@ def insert_media(data: dict) -> int:
             imdb_id      = excluded.imdb_id,
             language     = excluded.language,
             runtime_mins = excluded.runtime_mins
+        RETURNING id
     """
-    with get_connection() as conn:
-        cur = conn.execute(sql, (
+    with get_db() as cur:
+        cur.execute(sql, (
             data["tmdb_id"], data["media_type"], data["title"], data.get("overview"),
             json.dumps(data.get("genres", [])), json.dumps(data.get("cast_top5", [])),
             data.get("poster_path"), data.get("release_year"), data.get("imdb_rating"),
             data.get("imdb_id"), data.get("language"), data.get("runtime_mins"),
         ))
-        # Return the id of the upserted row
-        row = conn.execute("SELECT id FROM media WHERE tmdb_id = ?", (data["tmdb_id"],)).fetchone()
-        return row["id"]
+        return cur.fetchone()["id"]
 
 
 def log_watch(media_id: int, watch_date: str, platform: str = None, notes: str = None) -> int:
-    with get_connection() as conn:
-        cur = conn.execute(
-            "INSERT INTO watch_log (media_id, watch_date, platform, notes) VALUES (?, ?, ?, ?)",
+    with get_db() as cur:
+        cur.execute(
+            "INSERT INTO watch_log (media_id, watch_date, platform, notes) VALUES (%s, %s, %s, %s) RETURNING id",
             (media_id, watch_date, platform, notes),
         )
-        return cur.lastrowid
+        return cur.fetchone()["id"]
 
 
 def save_rating(watch_log_id: int, person: str, score: float, reaction: str = None):
-    with get_connection() as conn:
-        conn.execute(
+    with get_db() as cur:
+        cur.execute(
             """INSERT INTO ratings (watch_log_id, person, score, reaction)
-               VALUES (?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s)
                ON CONFLICT(watch_log_id, person) DO UPDATE SET
                    score    = excluded.score,
                    reaction = excluded.reaction""",
@@ -155,17 +165,18 @@ def get_watch_history(media_type: str = None, platform: str = None) -> list:
     """
     filters, params = [], []
     if media_type:
-        filters.append("m.media_type = ?")
+        filters.append("m.media_type = %s")
         params.append(media_type)
     if platform:
-        filters.append("wl.platform = ?")
+        filters.append("wl.platform = %s")
         params.append(platform)
     if filters:
         sql += " WHERE " + " AND ".join(filters)
     sql += " ORDER BY wl.watch_date DESC"
 
-    with get_connection() as conn:
-        return conn.execute(sql, params).fetchall()
+    with get_db() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
 
 
 def get_rated_titles_for_llm() -> list[dict]:
@@ -179,88 +190,87 @@ def get_rated_titles_for_llm() -> list[dict]:
         LEFT JOIN ratings r_w ON r_w.watch_log_id = wl.id AND r_w.person = 'wife'
         ORDER BY wl.watch_date DESC
     """
-    with get_connection() as conn:
-        rows = conn.execute(sql).fetchall()
-    return [dict(r) for r in rows]
+    with get_db() as cur:
+        cur.execute(sql)
+        return [dict(r) for r in cur.fetchall()]
 
 
 def delete_watch_log(log_id: int):
-    with get_connection() as conn:
-        conn.execute("DELETE FROM watch_log WHERE id = ?", (log_id,))
+    with get_db() as cur:
+        cur.execute("DELETE FROM watch_log WHERE id = %s", (log_id,))
 
 
 def get_platforms() -> list[str]:
-    with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT platform FROM watch_log WHERE platform IS NOT NULL ORDER BY platform"
-        ).fetchall()
-    return [r["platform"] for r in rows]
+    with get_db() as cur:
+        cur.execute("SELECT DISTINCT platform FROM watch_log WHERE platform IS NOT NULL ORDER BY platform")
+        return [r["platform"] for r in cur.fetchall()]
 
 
 def save_taste_rating(tmdb_id: int, title: str, person: str, score: float):
-    with get_connection() as conn:
-        conn.execute(
+    with get_db() as cur:
+        cur.execute(
             """INSERT INTO taste_ratings (tmdb_id, title, person, score)
-               VALUES (?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s)
                ON CONFLICT(tmdb_id, person) DO UPDATE SET
                    score    = excluded.score,
-                   rated_at = datetime('now')""",
+                   rated_at = CURRENT_TIMESTAMP""",
             (tmdb_id, title, person, score),
         )
 
 
 def get_watched_tmdb_ids() -> set:
-    with get_connection() as conn:
-        rows = conn.execute("SELECT DISTINCT tmdb_id FROM media JOIN watch_log ON watch_log.media_id = media.id").fetchall()
-    return {r["tmdb_id"] for r in rows}
+    with get_db() as cur:
+        cur.execute("SELECT DISTINCT tmdb_id FROM media JOIN watch_log ON watch_log.media_id = media.id")
+        return {r["tmdb_id"] for r in cur.fetchall()}
 
 
 def get_taste_rated_tmdb_ids() -> set:
-    with get_connection() as conn:
-        rows = conn.execute("SELECT DISTINCT tmdb_id FROM taste_ratings").fetchall()
-    return {r["tmdb_id"] for r in rows}
+    with get_db() as cur:
+        cur.execute("SELECT DISTINCT tmdb_id FROM taste_ratings")
+        return {r["tmdb_id"] for r in cur.fetchall()}
 
 
 def add_to_watchlist(tmdb_id: int, title: str, media_type: str, poster_path: str = None, overview: str = None):
-    with get_connection() as conn:
-        conn.execute(
+    with get_db() as cur:
+        cur.execute(
             """INSERT INTO watchlist (tmdb_id, title, media_type, poster_path, overview)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(tmdb_id) DO UPDATE SET added_at = datetime('now')""",
+               VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT(tmdb_id) DO UPDATE SET added_at = CURRENT_TIMESTAMP""",
             (tmdb_id, title, media_type, poster_path, overview),
         )
 
 
 def get_watchlist() -> list:
-    with get_connection() as conn:
-        return conn.execute("SELECT * FROM watchlist ORDER BY added_at DESC").fetchall()
+    with get_db() as cur:
+        cur.execute("SELECT * FROM watchlist ORDER BY added_at DESC")
+        return cur.fetchall()
 
 
 def get_watchlist_tmdb_ids() -> set:
-    with get_connection() as conn:
-        rows = conn.execute("SELECT tmdb_id FROM watchlist").fetchall()
-    return {r["tmdb_id"] for r in rows}
+    with get_db() as cur:
+        cur.execute("SELECT tmdb_id FROM watchlist")
+        return {r["tmdb_id"] for r in cur.fetchall()}
 
 
 def remove_from_watchlist(tmdb_id: int):
-    with get_connection() as conn:
-        conn.execute("DELETE FROM watchlist WHERE tmdb_id = ?", (tmdb_id,))
+    with get_db() as cur:
+        cur.execute("DELETE FROM watchlist WHERE tmdb_id = %s", (tmdb_id,))
 
 
 def add_recommendation_skip(tmdb_id: int, title: str):
-    with get_connection() as conn:
-        conn.execute(
+    with get_db() as cur:
+        cur.execute(
             """INSERT INTO recommendation_skips (tmdb_id, title)
-               VALUES (?, ?)
-               ON CONFLICT(tmdb_id) DO UPDATE SET skipped_at = datetime('now')""",
+               VALUES (%s, %s)
+               ON CONFLICT(tmdb_id) DO UPDATE SET skipped_at = CURRENT_TIMESTAMP""",
             (tmdb_id, title),
         )
 
 
 def get_skipped_rec_tmdb_ids() -> set:
-    with get_connection() as conn:
-        rows = conn.execute("SELECT tmdb_id FROM recommendation_skips").fetchall()
-    return {r["tmdb_id"] for r in rows}
+    with get_db() as cur:
+        cur.execute("SELECT tmdb_id FROM recommendation_skips")
+        return {r["tmdb_id"] for r in cur.fetchall()}
 
 
 def get_taste_ratings_for_llm() -> list[dict]:
@@ -269,8 +279,9 @@ def get_taste_ratings_for_llm() -> list[dict]:
         FROM taste_ratings
         ORDER BY rated_at DESC
     """
-    with get_connection() as conn:
-        rows = conn.execute(sql).fetchall()
+    with get_db() as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
 
     # Pivot per-title: merge user + wife scores into one dict
     by_title: dict[int, dict] = {}
