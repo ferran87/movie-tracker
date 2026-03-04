@@ -76,7 +76,7 @@ def build_pool(genres: list[str]) -> list[dict]:
 
 
 def pop_next() -> dict | None:
-    exclude = get_watched_tmdb_ids() | get_taste_rated_tmdb_ids()
+    exclude = st.session_state["excluded"]
     while st.session_state["pool"]:
         candidate = st.session_state["pool"].pop(0)
         if candidate["tmdb_id"] not in exclude:
@@ -96,6 +96,7 @@ def replace_pick(i: int):
 pool_key = tuple(sorted(selected_genres))
 if "pool" not in st.session_state or st.session_state.get("active_genres") != pool_key:
     st.session_state["active_genres"] = pool_key
+    st.session_state["excluded"] = get_watched_tmdb_ids() | get_taste_rated_tmdb_ids()
     with st.spinner("Loading titles..."):
         all_candidates = build_pool(selected_genres)
     st.session_state["pool"]  = all_candidates[3:]
@@ -149,6 +150,7 @@ for i, pick in enumerate(picks):
             if st.button("✅ Rated it", key=f"rate_{i}_{tmdb_id}", type="primary", use_container_width=True):
                 score = st.session_state.get(score_key, 5)
                 save_taste_rating(tmdb_id, title, "user", score)
+                st.session_state["excluded"].add(tmdb_id)
                 replace_pick(i)
                 st.toast(f"Rating saved for **{title}**!")
                 st.rerun()

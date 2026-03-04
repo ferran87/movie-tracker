@@ -5,6 +5,8 @@ from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
+import streamlit as st
+from psycopg2.pool import ThreadedConnectionPool
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env", override=True)
@@ -12,15 +14,23 @@ load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 
+@st.cache_resource
+def _get_pool():
+    return ThreadedConnectionPool(1, 5, DATABASE_URL)
+
+
 @contextmanager
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL)
+    pool = _get_pool()
+    conn = pool.getconn()
     try:
         with conn:  # auto-commit on success, rollback on exception
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 yield cur
-    finally:
-        conn.close()
+        pool.putconn(conn)
+    except Exception:
+        pool.putconn(conn, close=True)
+        raise
 
 
 def init_db():
@@ -270,6 +280,20 @@ def add_recommendation_skip(tmdb_id: int, title: str):
 def get_skipped_rec_tmdb_ids() -> set:
     with get_db() as cur:
         cur.execute("SELECT tmdb_id FROM recommendation_skips")
+        return {r["tmdb_id"] for r in cur.fetchall()}
+
+
+def get_all_excluded_tmdb_ids() -> set:
+    with get_db() as cur:
+        cur.execute("""
+            SELECT tmdb_id FROM media JOIN watch_log ON watch_log.media_id = media.id
+            UNION
+            SELECT tmdb_id FROM taste_ratings
+            UNION
+            SELECT tmdb_id FROM watchlist
+            UNION
+            SELECT tmdb_id FROM recommendation_skips
+        """)
         return {r["tmdb_id"] for r in cur.fetchall()}
 
 

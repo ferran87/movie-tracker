@@ -13,7 +13,7 @@ media_type = st.radio("Type", ["movie", "tv"], format_func=lambda x: "Movie" if 
 query = st.text_input("Search title", placeholder="e.g. The Bear, Interstellar...")
 
 results = []
-if query:
+if len(query) >= 3:
     with st.spinner("Searching TMDB..."):
         results = search(query, media_type)
 

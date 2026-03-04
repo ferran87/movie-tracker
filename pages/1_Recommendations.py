@@ -2,8 +2,7 @@ import streamlit as st
 from db.database import (
     get_rated_titles_for_llm, get_taste_ratings_for_llm,
     get_skipped_rec_tmdb_ids, add_recommendation_skip, save_taste_rating,
-    get_taste_rated_tmdb_ids, get_watched_tmdb_ids, add_to_watchlist,
-    get_watchlist_tmdb_ids,
+    add_to_watchlist, get_all_excluded_tmdb_ids,
 )
 from services.llm_client import get_recommendations
 from services.tmdb_client import search, get_poster_url
@@ -43,9 +42,7 @@ with st.expander(f"Based on {total_signals} rated title(s) — click to preview"
             st.markdown(f"- **{item['title']}** — Rating: {score_str}")
 
 if st.button("✨ Get Recommendations", type="primary"):
-    skipped_ids  = get_skipped_rec_tmdb_ids()
-    already_seen = get_watched_tmdb_ids() | get_taste_rated_tmdb_ids() | get_watchlist_tmdb_ids()
-    exclude_ids  = skipped_ids | already_seen
+    exclude_ids = get_all_excluded_tmdb_ids()
 
     # Tell Claude to avoid titles already rated on the landing page
     skipped_titles = [item["title"] for item in taste_data] + [item["title"] for item in watch_data]
