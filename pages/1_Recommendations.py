@@ -19,8 +19,12 @@ with st.sidebar:
         format_func=lambda x: {"all": "Movies & TV", "movie": "Movies only", "tv": "TV Shows only"}[x],
     )
 
-watch_data  = get_rated_titles_for_llm()
-taste_data  = get_taste_ratings_for_llm()
+if "watch_data" not in st.session_state:
+    st.session_state["watch_data"] = get_rated_titles_for_llm()
+    st.session_state["taste_data"] = get_taste_ratings_for_llm()
+
+watch_data = st.session_state["watch_data"]
+taste_data = st.session_state["taste_data"]
 
 if not watch_data and not taste_data:
     st.warning("Rate some titles on the **Discover & Rate** page or log watched titles first.")
