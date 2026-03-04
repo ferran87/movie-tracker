@@ -102,68 +102,77 @@ if "pool" not in st.session_state or st.session_state.get("active_genres") != po
     st.session_state["pool"]  = all_candidates[3:]
     st.session_state["picks"] = all_candidates[:3]
 
-picks: list[dict] = st.session_state["picks"]
-
-if not picks:
+if not st.session_state["picks"]:
     st.success("You've gone through everything in these categories! Try adding more genres or come back later.")
     st.stop()
 
+
 # ── Cards ─────────────────────────────────────────────────────────────────────
-for i, pick in enumerate(picks):
-    tmdb_id      = pick["tmdb_id"]
-    title        = pick["title"]
-    year         = pick.get("release_year") or "?"
-    mtype        = "Movie" if pick.get("media_type") == "movie" else "TV Show"
-    imdb_rating  = pick.get("imdb_rating")
-    raw_overview = pick.get("overview") or "No description available."
-    overview     = raw_overview[:300] + ("…" if len(raw_overview) > 300 else "")
-    poster       = get_poster_url(pick.get("poster_path"))
-    genre_names  = pick.get("genre_names", [])
+@st.fragment
+def render_picks():
+    picks: list[dict] = st.session_state["picks"]
 
-    st.divider()
-    col_img, col_info = st.columns([1, 4])
+    if not picks:
+        st.success("You've gone through everything in these categories! Try adding more genres or come back later.")
+        return
 
-    with col_img:
-        if poster:
-            st.image(poster, width=150)
-        else:
-            st.markdown("🎞️")
+    for i, pick in enumerate(picks):
+        tmdb_id      = pick["tmdb_id"]
+        title        = pick["title"]
+        year         = pick.get("release_year") or "?"
+        mtype        = "Movie" if pick.get("media_type") == "movie" else "TV Show"
+        imdb_rating  = pick.get("imdb_rating")
+        raw_overview = pick.get("overview") or "No description available."
+        overview     = raw_overview[:300] + ("…" if len(raw_overview) > 300 else "")
+        poster       = get_poster_url(pick.get("poster_path"))
+        genre_names  = pick.get("genre_names", [])
 
-    with col_info:
-        st.markdown(f"### {title} ({year})")
-        # Genres displayed below the title
-        if genre_names:
-            st.caption("  ·  ".join(genre_names))
-        imdb_str = f"⭐ {imdb_rating:.1f} / 10" if imdb_rating else "No rating"
-        st.markdown(f"`{mtype}`  ·  {imdb_str}")
-        st.write(overview)
+        st.divider()
+        col_img, col_info = st.columns([1, 4])
 
-        score_key = f"score_{i}_{tmdb_id}"
-        st.caption("Your rating:")
-        st.segmented_control(
-            "Rating", options=list(range(11)), default=5,
-            key=score_key, label_visibility="collapsed",
-        )
+        with col_img:
+            if poster:
+                st.image(poster, width=150)
+            else:
+                st.markdown("🎞️")
 
-        btn1, btn2, btn3 = st.columns(3)
-        with btn1:
-            if st.button("✅ Rated it", key=f"rate_{i}_{tmdb_id}", type="primary", use_container_width=True):
-                score = st.session_state.get(score_key, 5)
-                save_taste_rating(tmdb_id, title, "user", score)
-                st.session_state["excluded"].add(tmdb_id)
-                replace_pick(i)
-                st.toast(f"Rating saved for **{title}**!")
-                st.rerun()
-        with btn2:
-            if st.button("📌 Add to watchlist", key=f"wl_{i}_{tmdb_id}", use_container_width=True):
-                add_to_watchlist(
-                    tmdb_id, title, pick.get("media_type", "movie"),
-                    pick.get("poster_path"), raw_overview,
-                )
-                replace_pick(i)
-                st.toast(f"**{title}** added to your watchlist!")
-                st.rerun()
-        with btn3:
-            if st.button("⏭ Not watched yet", key=f"skip_{i}_{tmdb_id}", use_container_width=True):
-                replace_pick(i)
-                st.rerun()
+        with col_info:
+            st.markdown(f"### {title} ({year})")
+            if genre_names:
+                st.caption("  ·  ".join(genre_names))
+            imdb_str = f"⭐ {imdb_rating:.1f} / 10" if imdb_rating else "No rating"
+            st.markdown(f"`{mtype}`  ·  {imdb_str}")
+            st.write(overview)
+
+            score_key = f"score_{i}_{tmdb_id}"
+            st.caption("Your rating:")
+            st.segmented_control(
+                "Rating", options=list(range(11)), default=5,
+                key=score_key, label_visibility="collapsed",
+            )
+
+            btn1, btn2, btn3 = st.columns(3)
+            with btn1:
+                if st.button("✅ Rated it", key=f"rate_{i}_{tmdb_id}", type="primary", use_container_width=True):
+                    score = st.session_state.get(score_key, 5)
+                    save_taste_rating(tmdb_id, title, "user", score)
+                    st.session_state["excluded"].add(tmdb_id)
+                    replace_pick(i)
+                    st.toast(f"Rating saved for **{title}**!")
+                    st.rerun(scope="fragment")
+            with btn2:
+                if st.button("📌 Add to watchlist", key=f"wl_{i}_{tmdb_id}", use_container_width=True):
+                    add_to_watchlist(
+                        tmdb_id, title, pick.get("media_type", "movie"),
+                        pick.get("poster_path"), raw_overview,
+                    )
+                    replace_pick(i)
+                    st.toast(f"**{title}** added to your watchlist!")
+                    st.rerun(scope="fragment")
+            with btn3:
+                if st.button("⏭ Not watched yet", key=f"skip_{i}_{tmdb_id}", use_container_width=True):
+                    replace_pick(i)
+                    st.rerun(scope="fragment")
+
+
+render_picks()
