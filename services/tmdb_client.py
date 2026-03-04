@@ -11,9 +11,13 @@ _IMG_BASE = "https://image.tmdb.org/t/p/w500"
 
 def _get(path: str, params: dict = None) -> dict:
     params = params or {}
-    params["api_key"] = os.getenv("TMDB_API_KEY")
+    api_key = os.getenv("TMDB_API_KEY")
+    if not api_key:
+        raise ValueError("TMDB_API_KEY is not set")
+    params["api_key"] = api_key
     response = requests.get(f"{_BASE}{path}", params=params, timeout=10)
-    response.raise_for_status()
+    if not response.ok:
+        raise RuntimeError(f"TMDB API error {response.status_code} for {path}")
     return response.json()
 
 
